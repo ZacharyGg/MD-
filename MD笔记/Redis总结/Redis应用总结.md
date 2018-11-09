@@ -1581,11 +1581,604 @@ redis-sentinel /etc/redis/sentinel.conf
 
 ​	主从复制虽然解决了主节点的单点故障问题，但是由于所有的写操作都是在 Master 节点上操作，然后同步到 Slave 节点，那么同步就会有一定的延时，当系统很繁忙的时候，延时问题就会更加严重，而且会随着从节点slave的增多而愈加严重。
 
-# 九、Redis性能测试
+
+
+# 九、Redis实战应用
+
+​	
+
+## 1.Redis的Java客户端
+
+​	目前Redis的Java客户端主要有两种：Jedis、Redission，个人感觉Jedis用的广泛一些，而且个人现在开发用的也是Jedis。 
+
+​	Jedis是Redis的Java实现的客户端，其API提供了比较全面的Redis命令的支持；Redisson实现了分布式和可扩展的Java数据结构，和Jedis相比，功能较为简单，不支持字符串操作，不支持排序、事务、管道、分区等Redis特性，但是在集群模式下，Redisson为单个Redis集合类型提供了自动分片的功能，支持分布式对象，分布式集合，分布式锁。Redisson的宗旨是促进使用者对Redis的关注分离，从而让使用者能够将精力更集中地放在处理业务逻辑上。
+
+​	**连接对象**
+
+​		普通连接
+
+```java
+Jedis jedis = new Jedis("localhost");
+
+       jedis.set("foo", "bar");
+
+       String value = jedis.get("foo");
+
+       System.out.println(value);
+```
+
+​		连接池设置
+
+```properties
+#redis服务器ip #   
+redis.ip=172.30.5.117 
+#redis服务器端口号# 
+redis.port=6379 
+###jedis##pool##config### 
+#jedis的最大分配对象# 
+jedis.pool.maxActive=1024 
+#jedis最大保存idel状态对象数 # 
+jedis.pool.maxIdle=200 
+#jedis池没有对象返回时，最大等待时间 # 
+jedis.pool.maxWait=1000 
+#jedis调用borrowObject方法时，是否进行有效检查# 
+jedis.pool.testOnBorrow=true 
+#jedis调用returnObject方法时，是否进行有效检查 # 
+jedis.pool.testOnReturn=true
+```
+
+​	
+
+```java
+/**
+    * 获取化连接池配置
+    * @return JedisPoolConfig
+    * */
+private JedisPoolConfig getPoolConfig(){
+      if(config == null){
+         config = new JedisPoolConfig();
+         //最大连接数
+config.setMaxTotal(Integer.valueOf(getResourceBundle().getString("redis.pool.maxTotal")));
+         //最大空闲连接数
+config.setMaxIdle(Integer.valueOf(getResourceBundle().getString("redis.pool.maxIdle")));
+         //获取连接时的最大等待毫秒数(如果设置为阻塞时BlockWhenExhausted),如果超时就抛异常, 小于零:阻塞不确定的时间,  默认-1
+config.setMaxWaitMillis(Long.valueOf(getResourceBundle().getString("redis.pool.maxWaitMillis")));
+//在获取连接的时候检查有效性, 默认false
+config.setTestOnBorrow(Boolean.valueOf(getResourceBundle().getString("redis.pool.testOnBorrow")));
+//在获取返回结果的时候检查有效性, 默认false
+config.setTestOnReturn(Boolean.valueOf(getResourceBundle().getString("redis.pool.testOnReturn")));
+      }
+      return config;
+   }
+
+
+/**
+   * 初始化JedisPool
+
+    **/
+private void initJedisPool(){
+      if(pool == null){
+         //获取服务器IP地址
+         String ipStr = getResourceBundle().getString("redis.ip");
+         //获取服务器端口
+         int portStr = Integer.valueOf(getResourceBundle()
+.getString("redis.port"));
+         //初始化连接池
+         pool = new JedisPool(getPoolConfig(), ipStr,portStr);
+      }
+   } 
+```
+
+​	Sentinel连接池连接
+
+​		该连接池用于应对Redis的Sentinel的主从切换机制，能够正确在服务器宕机导致服务器切换时得到正确的服务器连接，当服务器采用该部署策略的时候推荐使用该连接池进行操作； 
+
+```java
+public class SentinelTest {
+    private Logger logger=LoggerFactory.getLogger(SentinelTest.class);
+    private  JedisSentinelPool jSentinelPool;
+    @Before
+    public  void setUp(){
+        String masterName="mymaster";
+        //sentinel地址集合
+        Set<String>set=new HashSet<String>();
+        set.add("192.168.138.128:26380");
+        set.add("192.168.138.128:26381");
+        set.add("192.168.138.128:26382");
+        GenericObjectPoolConfig gPoolConfig=new GenericObjectPoolConfig();
+        gPoolConfig.setMaxIdle(10); 
+        gPoolConfig.setMaxTotal(10); 
+        gPoolConfig.setMaxWaitMillis(10);
+        gPoolConfig.setJmxEnabled(true);
+        jSentinelPool=new JedisSentinelPool(masterName,set,gPoolConfig);
+    }
+    @Test
+    public void testWriet(){
+        Jedis jedis=null;
+        for(int i=0;i<10;i++){
+            try {
+                jedis=jSentinelPool.getResource();  
+                System.out.println(i);
+                String userKey="user"+i;
+                jedis.set(userKey, String.valueOf(i));
+            } catch (Exception e) {
+                // TODO: handle exception
+                e.printStackTrace();
+                logger.error(e.getMessage(),e);
+            }
+            finally{
+                if (jedis!=null) {
+                    jedis.close();
+                }
+            }
+        }
+    }
+}	
+```
+
+**键操作**
+
+​	![](/images/20171211104411421.png)
+
+​	**字符串操作**	![](/images/20171211104605037.png)
+
+**整数和浮点数操作**
+
+![](/images/20171211104705934.png)
+
+**列表(list)操作**
+
+![](/images/20171211114103435.png)
+
+**集合(set)操作**
+
+![](/images/20171211114213832.png)
+
+**哈希(hash)操作**
+
+![](/images/20171211114246788.png)
+
+**有序(zset)操作**
+
+![](/images/20171211114326862.png)
+
+**排序操作**
+
+![](/images/20171211114358083.png)
+
+**示例代码**
+
+```java
+//String的简单追加
+// 从池中获取一个Jedis对象
+JedisUtil.getInstance().STRINGS.append(key, value);
+
+
+//价格时间排序（前提是已经存储了价格，时间的SortSet）
+//执行2级排序操作（）
+
+String stPriceSet = “stPriceSet”;//stPriceSet价格的sortset列表名
+String stTimeSet = “stTimeSet”; // stTimeSet时间的sortset列表名
+Set<Tuple> sumSet = JedisUtilEx.getInstance()
+    .getSortSetByPirceUpAndTimeDown(stPriceSet, stTimeSet);
+//排序以后可以重复获取上次排序结果(缓存时间10分钟)
+Set<Tuple> sumSet = JedisUtilEx.getInstance().getLastPirceUpAndTimeDownSet();
+
+
+// 保存JavaBean到hash表中
+// bean继承至RedisBean
+JedisUtilEx.getInstance().setBeanToHash(bean);
+
+
+//从hash表中读取JavaBean
+//uuid为业务制定的唯一标识符规则（相当于主键）
+String uuid = “1”; //该ID是我们提前就知道的
+//T继承至RedisBean;
+JedisUtilEx.getInstance().getBeanFromHash (uuid,Class<T> cls);
+
+
+//将JavaBean列表装入hash中
+//list中的bean继承至RedisBean
+List<T> beanList = …;
+JedisUtilEx.getInstance().setBeanListToHash(beanList);
+//异步版本的存储列表到hash
+JedisUtilEx.getInstance().setBeanListToHashSyn(beanList);
+
+
+//普通的操作流程示例
+//获取jedis引用
+
+Jedis jedis = JedisUtil.getInstance().getJedis();
+//执行业务以及调用jedis提供的接口功能
+…
+jedis.hset(…);
+…
+//执行完成以后务必释放资源
+JedisUtil.getInstance().returnJedis(jedis);
+//若以后不会使用JEDIS，需要关闭所有链接池
+RedisConnetcion.destroyAllPools();
+
+
+
+//事务执行流程
+//获取连接资源
+Jedis jd = JedisUtil.getInstance().getJedis();
+//开启事务
+Transaction ts = jd.multi();
+//执行业务以及调用jedis提供的接口功能
+…
+jedis.hset(…);
+…
+//执行事务
+List<Object> list = ts.exec();
+//释放资源
+JedisUtil.getInstance().returnJedis(jd);
+
+
+//异步执行
+//获取连接资源
+Jedis jedis = JedisUtil.getInstance().getJedis();
+//获取管道
+Pipeline pipeline = jedis.pipelined();
+//执行业务以及调用jedis提供的接口功能
+…
+jedis.hset(…);
+…
+//提交并释放管道
+pipeline.syncAndReturnAll();
+//释放资源
+JedisUtil.getInstance().returnJedis(jedis);
+
+
+
+//如何获取Jedis命名规则的合成KEY
+//获取类的唯一键值key,例如：User:1(User为class,1为uuid)其中user继承于Reidsbean
+JedisUtilEx.getInstance().getBeanKey(user);
+//另一种获取类的唯一键值key的方法
+JedisUtilEx.getInstance().getBeanKey(String uuid,Class<T> cls);
+//获取bean对应的KEY(对应列的唯一键值key)
+JedisUtilEx.getInstance().getBeanKey(String uuid,Class<T> cls,String... fileds);
+//获取bean对应的KEY(集群key)
+JedisUtilEx.getInstance().getBeanKey(Class<T> cls,String... fileds);
+```
+
+​	
+
+## 2.Redis管道化pipeline
+
+​	Redis的pipeline(管道)功能在命令行中没有，但redis是支持pipeline的，而且在各个语言版的client中都有相应的实现。 由于网络开销延迟，就算redis server端有很强的处理能力，也会由于收到的client消息少，而造成吞吐量小。当client 使用pipelining 发送命令时，redis server必须将部分请求放到队列中（使用内存），执行完毕后一次性发送结果；如果发送的命令很多的话，建议对返回的结果加标签，当然这也会增加使用的内存；
+
+​	Redis的pipeline(管道)功能在命令行中没有，但redis是支持pipeline的，而且在各个语言版的client中都有相应的实现。 由于网络开销延迟，就算redis server端有很强的处理能力，也会由于收到的client消息少，而造成吞吐量小。当client 使用pipelining 发送命令时，redis server必须将部分请求放到队列中（使用内存），执行完毕后一次性发送结果；如果发送的命令很多的话，建议对返回的结果加标签，当然这也会增加使用的内存；
+
+​	不过在编码时请注意，pipeline期间将“独占”链接，此期间将不能进行非“管道”类型的其他操作，直到pipeline关闭；如果你的pipeline的指令集很庞大，为了不干扰链接中的其他操作，你可以为pipeline操作新建Client链接，让pipeline和其他正常操作分离在2个client中。不过pipeline事实上所能容忍的操作个数，和socket-output缓冲区大小/返回结果的数据尺寸都有很大的关系；同时也意味着每个redis-server同时所能支撑的pipeline链接的个数，也是有限的，这将受限于server的物理内存或网络接口的缓冲能力。
+
+**简介**
+
+​	Redis使用的是**客户端-服务器（CS）模型**和**请求/响应协议的TCP服务器**。这意味着通常情况下一个请求会遵循以下步骤： 
+
+- 客户端向服务端发送一个查询请求，并监听Socket返回，通常是以阻塞模式，等待服务端响应 
+- 服务端处理命令，并将结果返回给客户端。
+
+
+
+​	Redis客户端与Redis服务器之间使用TCP协议进行连接，一个客户端可以通过一个socket连接发起多个请求命令。每个请求命令发出后client通常会阻塞并等待redis服务器处理，redis处理完请求命令后会将结果通过响应报文返回给client，因此当执行多条命令的时候都需要等待上一条命令执行完毕才能执行。比如：
+
+​	![](/images/20171211090550739.png)
+
+​	其执行过程如下图所示： 
+
+​	![](/images/20171211090604265.png)
+
+​	由于通信会有网络延迟，假如client和server之间的包传输时间需要0.125秒。那么上面的三个命令6个报文至少需要0.75秒才能完成。这样即使redis每秒能处理100个命令，而我们的client也只能一秒钟发出四个命令。这显然没有充分利用 redis的处理能力 
+
+​	而管道（pipeline）可以一次性发送多条命令并在执行完后一次性将结果返回，pipeline通过减少客户端与redis的通信次数来实现降低往返延时时间，而且Pipeline 实现的原理是队列，而队列的原理是时先进先出，这样就保证数据的顺序性。 Pipeline 的默认的同步的个数为53个，也就是说arges中累加到53条数据时会把数据提交。其过程如下图所示：client可以将三个命令放到一个tcp报文一起发送，server则可以将三条命令的处理结果放到一个tcp报文返回。
+
+​	![](/images/20171211090625196.png)
+
+​	需要注意到是用 pipeline方式打包命令发送，redis必须在处理完所有命令前先缓存起所有命令的处理结果。**打包的命令越多，缓存消耗内存也越多**。所以并不是打包的命令越多越好。具体多少合适需要根据具体情况测试。 
+
+
+
+**普通模式和管道模式比较**
+
+```java
+    /*
+     * 测试普通模式与PipeLine模式的效率： 
+     * 测试方法：向redis中插入10000组数据
+     */
+    public static void testPipeLineAndNormal(Jedis jedis)
+            throws InterruptedException {
+        Logger logger = Logger.getLogger("javasoft");
+        long start = System.currentTimeMillis();
+        for (int i = 0; i < 10000; i++) {
+            jedis.set(String.valueOf(i), String.valueOf(i));
+        }
+        long end = System.currentTimeMillis();
+        logger.info("the jedis total time is:" + (end - start));
+
+        Pipeline pipe = jedis.pipelined();// 先创建一个pipeline的链接对象
+        long start_pipe = System.currentTimeMillis();
+        for (int i = 0; i < 10000; i++) {
+            pipe.set(String.valueOf(i), String.valueOf(i));
+        }
+        pipe.sync();// 获取所有的response
+        long end_pipe = System.currentTimeMillis();
+        logger.info("the pipe total time is:" + (end_pipe - start_pipe));
+
+        BlockingQueue<String> logQueue = new LinkedBlockingQueue<String>();
+        long begin = System.currentTimeMillis();
+        for (int i = 0; i < 10000; i++) {
+            logQueue.put("i=" + i);
+        }
+        long stop = System.currentTimeMillis();
+        logger.info("the BlockingQueue total time is:" + (stop - begin));
+    }
+```
+
+![](/images/20171211091358991.png)
+
+​	从上述代码以及结果中可以明显的看到PipeLine在“批量处理”时的优势
+
+**适用场景**
+
+​	有些系统可能对可靠性要求很高，每次操作都需要立马知道这次操作是否成功，是否数据已经写进redis了，那这种场景就不适合。
+
+  还有的系统，可能是批量的将数据写入redis，允许一定比例的写入失败，那么这种场景就可以使用了，比如10000条一下进入redis，可能失败了2条无所谓，后期有补偿机制就行了，比如短信群发这种场景，如果一下群发10000条，按照第一种模式去实现，那这个请求过来，要很久才能给客户端响应，这个延迟就太长了，如果客户端请求设置了超时时间5秒，那肯定就抛出异常了，而且本身群发短信要求实时性也没那么高，这时候用pipeline最好了。
+
+
+
+**管道(pipeline)和脚本(Scripting)**
+
+​	大量 pipeline 应用场景可通过 Redis 脚本（Redis 版本 >= 2.6）得到更高效的处理，后者在服务器端执行大量工作。脚本的一大优势是可通过最小的延迟读写数据，让读、计算、写等操作变得非常快（pipeline 在这种情况下不能使用，因为客户端在写命令前需要读命令返回的结果）。
+
+​	应用程序有时可能在 pipeline 中发送 EVAL 或 EVALSHA 命令。Redis 通过 SCRIPT LOAD 命令（保证 EVALSHA 成功被调用）明确支持这种情况。 
+
+
+
+## 3.Redis事务
+
+​	Redis中与事务相关的命令有5个，分别是：MULTI EXEC DISCARD WATCH UNWATCH 
+
+​	1）MULTI命令用于开启事务： 
+
+​	开启事务后，可以开始对键执行操作。能看到开启事务后命令的返回都是”QUEUED”，Redis Server收到这些命令后将他们保存在队列中，只有收到EXEC命令才会真正执行 
+
+​	![](/images/20171209213009316.png)
+
+​	2）EXEC命令：当在exec之前使用watch命令的话，只有被watch的key没有被修改的情况下，exec命令才会真正执行（类似于**乐观锁optimistic lock**）（案例见（4）），exec的返回结果是一个Array结构的数据，其中每个元素是事务中顺序执行的命令的结果 
+
+​	3）当执行了MULTI命令和一些操作后，想放弃当前事务，可以使用DISCARD命令，DISCARD命令会清空事务命令队列，并退出事务（注意discard并不是rollback回滚）。 
+
+​	4）WATCH命令：监控一个或者多个key，如果这些key在提交事务（EXEC）之前被其他用户修改过，那么事务将执行失败，需要重新获取最新数据重头操作（类似于乐观锁）。使得Redis事务具有check-and-set（CAS）语义，WATCH命令用法： 
+
+​	客户端1
+
+​	![](/images/20171209213048547.png)
+
+​	客户端2
+
+​	![](/images/20171209213108131.png)
+
+​	上述命令中：Client1对count使用WATCH命令后开启事务，在执行EXEC命令前，Client2修改了count的值，Client1执行EXEC命令会失败。 
+
+​	5）UNWATCH：取消WATCH命令对所有key的监控，所有监控锁将会被取消。 
+
+​	
+
+​	**Redis事务特性**
+
+- **单独的隔离操作**：事务中的所有命令会被序列化、按顺序执行，在执行的过程中不会被其他客户端发送来的命令打断
+
+- **没有隔离级别的概念**：队列中的命令在事务没有被提交之前不会被实际执行
+- **不保证原子性**：redis中的一个事务中如果存在命令执行失败，那么其他命令依然会被执行（比如出现下面的错误类型二），没有回滚机制
+
+
+
+​	**Redis事务中会出现两类错误**
+
+- 命令语法错误、参数错误等，命令没有进入事务的命令队列，直接就返回错误。
+
+- 命令进入事务的命令队列，但在执行EXEC后出错，例如对错误的数据类型使用了不支持的操作 
+
+  ​	客户端可以在事务提交前就感知到第一类错误，一般客户端在收到第一类错误时会discard当前事务，当执行EXEC命令时返回：(error) EXECABORT Transaction discarded because of previous errors。比如： 
+
+![](/images/20171209213258066.png)
+
+​	在第五条命令中我随便打了几个字符，提交事务的时候并没有成功，这也很符合我们对事务的理解。从图中可以看到错误命令在我输入的时候就已经报错了，也就是说这条错误命令在进入队列的时候redis就已经知道这是一条错误命令，这样，整个事务的命令将全部失败，那么，有没有一种可能某个错误指令在进入队列的时候redis还没有发现他的错误呢？比如：
+
+​	![](/images/20171209213353488.png)
+
+​	这就是我们上面提到的第二类错误，对于一个存在问题的命令，如果在入队的时候就已经知道其出错，整个事务内的命令将都不会被执行（其后续的命令依然可以入队），如果这个错误命令在入队的时候并没有报错，而是在执行的时候出错了，那么redis默认跳过这个命令执行后续命令。也就是说，redis只实现了部分事务（并不能保证事务的原子性）。
+
+
+
+## 4.Redis发布订阅
+
+​	SUBSCRIBE、UNSUBSCRIBE和PUBLISH 三个命令实现了发布与订阅信息泛型（Publish/Subscribe messaging paradigm），在这个实现中， 发送者（发送信息的客户端）不是将信息直接发送给特定的接收者（接收信息的客户端）， 而是将信息发送给频道（channel）， 然后由频道将信息转发给所有对这个频道感兴趣的订阅者。也就是说发送者无须知道任何关于订阅者的信息， 而订阅者也无须知道是那个客户端给它发送信息， 它只要关注自己感兴趣的频道即可。
+
+​	对发布者和订阅者进行解构（decoupling），可以极大地提高系统的扩展性（scalability），并得到一个更动态的网络拓扑（network topology）。 
+
+​	Redis 客户端可以订阅任意数量的频道。 
+
+​	下图展示了频道 channel1，以及订阅这个频道的三个客户端 —— client2、client5和 client1之间的关系： 
+
+​	![](/images/20171212105703292.png)
+
+​	当有新消息通过 PUBLISH 命令发送给频道 channel1 时， 这个消息就会被发送给订阅它的三个客户端： 
+
+​	![](/images/20171212105719479.png)
+
+**原理**
+
+​	RedisServer包含两个重要的结构： 
+
+- channels：实际上就是一个key-value的Map结构,key为订阅地频道，value为Client的List
+- patterns:存放模式+client地址的列表
+
+![](/images/20171212105952055.png)
+
+​	 **流程：**从pubsub_channels中找出跟publish中channel相符的clients-list，然后再去pubsub_patterns中找出每一个相符的pattern和client。向这些客户端发送publish的消息。 
+
+
+
+**信息格式**
+
+​	频道转发的每条信息都是一条带有三个元素的多条批量回复（multi-bulk reply）。信息的第一个元素标识了信息的类型： 
+
+- subscribe ： 表示当前客户端成功地订阅了第二个元素所指示的频道，而信息的第三个元素则记录了目前客户端已订阅频道的总数。	
+- unsubscribe ： 表示当前客户端成功地退订了第二个元素所指示的频道，信息的第三个元素记录了客户端目前仍在订阅的频道数量。当客户端订阅的频道数量降为 0 时， 客户端不再订阅任何频道， 它可以像往常一样， 执行任何 Redis 命令。
+- message ： 表示这条信息是由某个客户端执行 PUBLISH 命令所发送的真正的信息。 信息的第二个元素是信息来源的频道， 而第三个元素则是信息的内容。
+
+
+
+​	当然，Redis 的发布与订阅实现也支持**模式匹配**（pattern matching）： 客户端可以订阅一个带 * 号的模式， 如果某个/某些频道的名字和这个模式匹配， 那么当有信息发送给这个/这些频道的时候， 客户端也会收到这个/这些频道的信息。 
+
+**实例**
+
+​	![](/images/20171212110607184.png)
+
+
+
+![](/images/20171212110629505.png)
+
+![](/images/20171212110654878.png)
+
+![](/images/20171212110714396.png)
+
+Jedis中提供了JedisPubSub抽象类来提供发布/订阅的机制，在实际应用中需要实现JedisPubSub类。
+
+​	
+
+建立一个Publisher (发布者) 
+
+```java
+public class Publisher extends Thread{
+    private final JedisPool jedisPool;
+    public Publisher(JedisPool jedisPool) {
+        this.jedisPool = jedisPool;
+    }   
+    @Override
+    public void run() {
+        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+        Jedis jedis = jedisPool.getResource();   //连接池中取出一个连接
+        while (true) {
+            String line = null;
+            try {
+                line = reader.readLine();
+                if (!"quit".equals(line)) {
+                    jedis.publish("mychannel", line);   //从 mychannel 的频道上推送消息
+                } else {
+                    break;
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}
+```
+
+再建立一个订阅者 
+
+```java
+public class Subscriber extends JedisPubSub {
+
+    public Subscriber(){}
+    @Override
+    public void onMessage(String channel, String message) {       //收到消息会调用
+        System.out.println(String.format("receive redis published message, channel %s, message %s", channel, message));
+    }
+    @Override
+    public void onSubscribe(String channel, int subscribedChannels) {    //订阅了频道会调用
+        System.out.println(String.format("subscribe redis channel success, channel %s, subscribedChannels %d",
+                channel, subscribedChannels));
+    }
+    @Override
+    public void onUnsubscribe(String channel, int subscribedChannels) {   //取消订阅 会调用
+        System.out.println(String.format("unsubscribe redis channel, channel %s, subscribedChannels %d",
+                channel, subscribedChannels));
+
+    }
+}
+```
+
+​	这里订阅者需要继承JedisPubSub，来重写它的三个方法。用途 注释上已经写了，很简单。
+
+我们这里只是定义了一个订阅者，下面去订阅频道。
+
+```java
+public class SubThread extends Thread {
+
+    private final JedisPool jedisPool;
+    private final Subscriber subscriber = new Subscriber();
+
+    private final String channel = "mychannel";
+
+    public SubThread(JedisPool jedisPool) {
+        super("SubThread");
+        this.jedisPool = jedisPool;
+    }
+
+    @Override
+    public void run() {
+        System.out.println(String.format("subscribe redis, channel %s, thread will be blocked", channel));
+        Jedis jedis = null;
+        try {
+            jedis = jedisPool.getResource();   //取出一个连接
+            jedis.subscribe(subscriber, channel);    //通过subscribe 的api去订阅，入参是订阅者和频道名
+        } catch (Exception e) {
+            System.out.println(String.format("subsrcibe channel error, %s", e));
+        } finally {
+            if (jedis != null) {
+                jedis.close();
+            }
+        }
+    }
+}
+```
+
+最后，再写一个测试类去跑一下。键盘输入消息，订阅者就会触发onMessage方法 
+
+​	
+
+```java
+public class PubSubDemo {
+
+    public static void main( String[] args )
+    {
+        // 连接redis服务端
+        JedisPool jedisPool = new JedisPool(new JedisPoolConfig(), "127.0.0.1", 6379);
+        
+        System.out.println(String.format("redis pool is starting, redis ip %s, redis port %d", "127.0.0.1", 6379));
+
+        SubThread subThread = new SubThread(jedisPool);  //订阅者
+        subThread.start();
+
+        Publisher publisher = new Publisher(jedisPool);    //发布者
+        publisher.start();
+    }
+}
+```
+
+​	![](/images/384562031.png)
+
+## 5.Redis Bitset应用
+
+​	1.单人  用户签到
+
+​	2.统计活跃用户
+
+
+
+
+
+
+
+# 十、Redis性能测试
 
 ​	之前说过Redis在make之后有一个redis-benchmark，这个就是Redis提供用于做性能测试的，它可以用来模拟N个客户端同时发出M个请求。首先看一下redis-benchmark自带的一些参数：
 
-![](/images/20181108202004.png)
+![](C:/Users/Administrator/Desktop/MD%E7%AC%94%E8%AE%B0/MD%E7%AC%94%E8%AE%B0/Redis%E6%80%BB%E7%BB%93/images/20181108202004.png)
 
 抛开配置只谈性能的都是耍流氓，说一下我买的阿里云服务器的配置：
 
@@ -1596,13 +2189,13 @@ redis-sentinel /etc/redis/sentinel.conf
 
 首先我们运行最简单的**redis-benchmark -q**，运行结果为：
 
-​	![](/images/1232173694.png)
+​	![](C:/Users/Administrator/Desktop/MD%E7%AC%94%E8%AE%B0/MD%E7%AC%94%E8%AE%B0/Redis%E6%80%BB%E7%BB%93/images/1232173694.png)
 
 打印了每个命令的QPS，看到基本都在读写速度基本都在100000次/s以上。
 
 接着换一个命令进行测试，因为实际场景中我们的Key和Value一定是非常丰富的，不可能是单一的Key和单一的Value，因此接着去的测试使用-r模拟value到100000且将运行次数提高到1000000次，具体命令为**redis-benchmark -q -r 100000 -n 1000000**，运行结果为：
 
-​	![](/images/1783973661.png)
+​	![](C:/Users/Administrator/Desktop/MD%E7%AC%94%E8%AE%B0/MD%E7%AC%94%E8%AE%B0/Redis%E6%80%BB%E7%BB%93/images/1783973661.png)
 
 看到整个读写效率基本都在110000次/s以上，证明了读写的高效率。
 
@@ -1617,31 +2210,3 @@ redis-sentinel /etc/redis/sentinel.conf
 - 尽可能使用大内存，避免SWAP
 
 ![](/images/1666145256.png)
-
-
-
-​	
-
-​	
-
-​	
-
-​	
-
-​	
-
-​	
-
-​	
-
-
-
-
-
-​	
-
-
-
-​	
-
-​	
